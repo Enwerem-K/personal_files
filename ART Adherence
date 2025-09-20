@@ -1,0 +1,979 @@
+---
+title: "HIV Treatment Adherence in a Facility in North-Central Nigeria."
+author: "Kenneth Enwerem"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = F,
+                      message = F)
+
+# Install and Load Packages
+pacman::p_load(
+  rio,          # File import
+  gapminder,    # to have access to the gapminder data
+  here,         # File locator
+  skimr,        # get overview of data
+  tidyverse,    # data management + ggplot2 graphics 
+  gtsummary,    # summary statistics and tests
+  rstatix,      # summary statistics and statistical tests
+  janitor,      # adding totals and percents to tables
+  scales,       # easily convert proportions to percents  
+  flextable,    # converting tables to pretty images
+  apyramid,     # for age pyramids
+  forcats,      # working with factor variables
+  patchwork,    # joining figures together
+  lubridate,    # general package for handling and converting dates
+  epikit,       # epidemiological calculations
+  stringr,      # working with strings
+  scales,
+  parsedate,    # has function to "guess" messy dates
+  aweek,        # another option for converting dates to weeks, and weeks to dates
+  zoo           # additional date/time functions
+)
+
+
+# Import data and remove duplicated folder numbers
+pri_data <- import("primary_data.xlsx") %>% 
+  clean_names() %>% 
+  # select(-c(start, 
+  #           end, 
+  #           treatment_adherence_and_health_status_among_hiv_positive_patients_in_faith_alive_foundation_hospital_jos, 
+  #           starts_with("section"), 67:76)) %>% 
+  distinct(folder_no, .keep_all = TRUE) # removes duplicated folder numbers
+
+
+#sec <- import("secondary_data2.xlsx")
+sec_data <- import("secondary_data2.xlsx") %>% 
+  clean_names() %>% 
+  distinct(folder_no, .keep_all = TRUE) # removes duplicated folder numbers
+
+
+# Data exploration --------------------------------------------------------
+#pri_data %>% select(-c(1,2)) %>% tbl_summary() %>% bold_labels()
+
+# Data Cleaning and manipulation
+
+
+# Primary Data cleaning pipeline
+pri_data_clean <- pri_data %>% 
+  
+  mutate(age_group = age_categories(age_years,
+                                    breakers = c(18, 35, 50, 65))) %>% 
+  
+  mutate(gender = recode(gender,
+                         "f" = "Female",
+                         "m" = "Male")) %>% 
+  
+  mutate(marital_status = fct_relevel(marital_status,
+                                      "Single",
+                                      "Married",
+                                      "Separated",
+                                      "Widowed")) %>% 
+  
+  mutate(level_of_education = fct_relevel(level_of_education,
+                                          "No formal education",
+                                          "Primary",
+                                          "Secondary",
+                                          "Tertiary")) %>% 
+  
+  mutate(employment_status = recode(employment_status,
+                                    "Umemployed" = "Unemployed")) %>% 
+  
+  mutate(employment_status = fct_relevel(employment_status,
+                                         "Unemployed",
+                                         "Employed",
+                                         "Self-employed",
+                                         "Retired")) %>% 
+  
+  mutate(date_clean = case_when(str_detect(
+    how_long_have_you_been_on_anti_retroviral_treatment_art_years_months,
+    "^\\d+$") ~ as.character(as.Date(as.numeric(how_long_have_you_been_on_anti_retroviral_treatment_art_years_months), origin = "1899-12-30")),
+    TRUE ~ how_long_have_you_been_on_anti_retroviral_treatment_art_years_months)) %>%
+  
+  mutate(date_onset_of_art = as.Date(parse_date(date_clean))) %>% 
+  
+  mutate(date_of_data_collection = ymd("2025-07-15")) %>% 
+  
+  mutate(duration_of_art = as.numeric(date_of_data_collection - date_onset_of_art)) %>% 
+  
+  mutate(duration_of_art = ifelse(duration_of_art < 0, NA, duration_of_art)) %>% 
+  
+  mutate(duration_of_art_months = round(duration_of_art/12, 1)) %>% 
+  
+  mutate(duration_of_art_years = round(duration_of_art/365, 1)) %>% 
+  
+  mutate(art_duration_category = age_categories(duration_of_art_years,
+                                                breakers = c(0, 2, 6, 11))) %>% 
+  
+  mutate(how_often_do_you_visit_the_hospital_for_art_refill = recode(
+    how_often_do_you_visit_the_hospital_for_art_refill,
+    "Every 6 months" = "4 - 6 months")) %>%
+  
+  mutate(how_often_do_you_visit_the_hospital_for_art_refill = fct_relevel(
+    how_often_do_you_visit_the_hospital_for_art_refill,
+    "Weekly", "1 - 3 months", "4 - 6 months", "Greater than 6 months")) %>% 
+  
+  mutate(in_the_past_30_days_how_many_doses_of_art_have_you_missed = fct_relevel(
+    in_the_past_30_days_how_many_doses_of_art_have_you_missed,
+    "None", "1 - 2", "3 - 5", "More than 5")) %>% 
+  
+  mutate(how_do_you_take_your_art_medication = fct_relevel(
+    how_do_you_take_your_art_medication,
+    "Often forget or skip doses", "Sometimes on time, sometimes late", 
+    "Exactly as prescribed")) %>% 
+  
+  mutate(when_was_your_last_viral_load_test = fct_relevel(
+    when_was_your_last_viral_load_test,
+    "Less than 6 months ago",
+    "6 - 12 months ago",
+    "More than a year ago")) %>% 
+  
+  mutate(what_was_your_last_viral_load_result = fct_relevel(
+    what_was_your_last_viral_load_result,
+    "Above 1000 copies/ml",
+    "Detectable but below 1000 copies/ml",
+    "Undetectable",
+    "I don't know")) %>% 
+  
+  mutate(how_would_you_describe_your_general_health_status_since_starting_art = fct_relevel(
+    how_would_you_describe_your_general_health_status_since_starting_art,
+    "Worse", 
+    "No change", 
+    "Slightly better", 
+    "Much better")) %>% 
+  
+  mutate(have_you_disclosed_your_status_to_any_of_the_following = fct_relevel(
+    have_you_disclosed_your_status_to_any_of_the_following,
+    "Partner", 
+    "Family member(s)", 
+    "Friend(s)")) %>% 
+  
+  mutate(folder_no = str_to_title(folder_no)) %>% 
+  
+  select(-c(how_long_have_you_been_on_anti_retroviral_treatment_art_years_months,
+            what_are_the_reasons_for_missing_art_doses_check_all_that_apply,
+            if_others_above_please_specifiy,
+            have_you_experienced_any_of_the_following_in_the_past_six_months_check_all_that_apply,
+            if_others_above_pls_specify,
+            what_factors_make_it_easier_for_you_to_adhere_to_art_check_all_that_apply,
+            if_others_pls_specify,
+            date_clean,
+            what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply,
+            start, end, 
+            treatment_adherence_and_health_status_among_hiv_positive_patients_in_faith_alive_foundation_hospital_jos, 
+            starts_with("section"), 
+            id, uuid, 
+            submission_time, 
+            validation_status, 
+            notes, status, 
+            submitted_by, 
+            version, 
+            tags, index)) %>% 
+  
+  select(folder_no, age_years, gender, religion, marital_status, level_of_education, employment_status, duration_of_art, everything())
+
+  
+
+# Secondary Data Cleaning Pipeline
+# sec_data_clean %>% 
+#   select(-c(1:4, 22:31)) %>% 
+#   tbl_summary() %>% bold_labels()
+
+
+sec_data_clean <- sec_data %>% 
+  
+  mutate(weight_at_commencement_of_art_kg = recode(
+    weight_at_commencement_of_art_kg,
+    "19" = "109"
+  )) %>% 
+  
+  mutate(current_weight_kg = recode(current_weight_kg,
+                                    "19" = "109",
+                                    "350" = "35",
+                                    "482" = "48",
+                                    "654" = "64")) %>% 
+  
+  mutate(weight_at_commencement_of_art_kg = as.numeric(
+    weight_at_commencement_of_art_kg
+    )) %>% 
+  
+  mutate(current_weight_kg = as.numeric(
+    current_weight_kg
+  )) %>% 
+  
+  mutate(weight_change = current_weight_kg - weight_at_commencement_of_art_kg) %>% 
+  
+  mutate(weight_change_status = case_when(weight_change < 0 ~ "decreased", 
+                                          weight_change == 0 ~ "no change", 
+                                          weight_change > 0 ~ "increased", 
+                                          TRUE ~ NA_character_)) %>% 
+  
+  mutate(current_hiv_staging = fct_relevel(
+    current_hiv_staging,
+    "Stage 1", "Stage 2", "Stage 4")) %>% 
+  
+  mutate(hiv_staging_status = case_when(
+    hiv_staging_at_commencement_of_art == current_hiv_staging ~ "Stage 1 -> Stage 1",
+    hiv_staging_at_commencement_of_art != current_hiv_staging ~ str_glue(
+      "{hiv_staging_at_commencement_of_art} -> {current_hiv_staging}"))) %>% 
+  
+  mutate(date_of_commencement_of_art = as.Date(
+    ymd_hms(date_of_commencement_of_art)
+    )) %>% 
+  
+  mutate(current_art_line_of_regimen = fct_relevel(
+    current_art_line_of_regimen,
+    "1st line", "2nd line"
+    )) %>% 
+  
+  mutate(baseline_viral_load_copies_ml = as.numeric(
+    baseline_viral_load_copies_ml
+    )) %>% 
+  
+  mutate(date_of_most_recent_viral_load_test = as.Date(ymd_hms(
+    date_of_most_recent_viral_load_test))) %>%
+  
+  mutate(current_viral_load_copies_ml = as.numeric(
+    current_viral_load_copies_ml
+    )) %>% 
+  
+  mutate(viral_load_change = 
+           current_viral_load_copies_ml - baseline_viral_load_copies_ml) %>% 
+  
+  mutate(viral_load_status = case_when(viral_load_change < 0 ~ "decreased", 
+                                       viral_load_change == 0 ~ "no change", 
+                                       viral_load_change > 0 ~ "increased", 
+                                       TRUE ~ NA_character_)) %>%
+  
+  mutate(is_there_viral_suppression_1000_copies_ml = fct_relevel(
+    is_there_viral_suppression_1000_copies_ml,
+    "No (greater than or equal to 1000)",
+    "Yes (less than 1000)"
+    )) %>% 
+  
+  mutate(clients_documented_art_adherence_by_clinician = fct_relevel(
+    clients_documented_art_adherence_by_clinician,
+    "Poor (Less than 85%)",
+    "Fair (85% - 94%)",
+    "Good (greater than or equal to 95%)"
+  )) %>% 
+  
+  select(-c(1:4, 22:32)) %>% 
+  
+  mutate(folder_no = str_to_title(folder_no))
+  
+
+# Join the primary and secondary data set
+
+pri_sec <- inner_join(pri_data_clean,
+                      sec_data_clean,
+                      by = "folder_no") %>% 
+  select(-date_onset_of_art,
+         -duration_of_art_years_months,
+         -date_of_commencement_of_art,
+         -date_of_most_recent_viral_load_test,
+         -clients_name_initials)
+
+# Export data
+export(pri_sec, "adherence_joined.rds")
+
+
+
+# Import data
+adherence <- import("adherence_joined.rds")
+
+# Data cleaning
+adherence <- adherence %>% 
+  mutate(gender = replace_na(gender, "Female"),
+         religion = replace(religion, religion == "Others", "Christianity"),
+         is_there_viral_suppression_1000_copies_ml = replace_na(
+           is_there_viral_suppression_1000_copies_ml, "Yes (less than 1000)"),
+         clients_documented_art_adherence_by_clinician = replace_na(
+           clients_documented_art_adherence_by_clinician, "Good (greater than or equal to 95%)"),
+         baseline_viral_load_category = ifelse(baseline_viral_load_copies_ml >= 1000,
+                                               yes = "≥1000 copies/ml",
+                                               no = "<1000 copies/ml"),
+         current_viral_load_copies_ml = replace_na(current_viral_load_copies_ml, 19),
+         current_viral_load_category = ifelse(current_viral_load_copies_ml >= 1000,
+                                              yes = "≥1000 copies/ml",
+                                               no = "<1000 copies/ml"))
+
+
+```
+
+  
+    
+### **Results**
+This study aimed to assess treatment adherence and health status among HIV-positive clients at Faith Alive Foundation, Jos, Nigeria, and to examine the relationship between them. A total of 609 patients were included in the analysis. The health status was primarily measured through virological outcomes (specifically baseline and current viral load suppression, defined as <1000 copies/ml and ≥1000 copies/ml). Other health status measures included HIV staging/progress, weight stability, presence of opportunistic infection, presence of symptoms of sexually transmitted diseases and other co-mobidities. The findings are presented below.
+
+
+#### Socio-demographic characteristics of respondents
+```{r}
+
+adherence %>% 
+  select(Gender = gender,
+         `Age (years)` = age_years,
+         `Age group (years)` = age_group,
+         Religion = religion,
+         `Marital status` = marital_status,
+         `Education level` = level_of_education,
+         `Employment status`= employment_status,
+         `Residence in Plateau state` = do_you_live_in_plateau_state,
+         `Sexually active` = are_you_sexually_active,
+         `More than one sexual partner` = if_yes_do_you_have_more_than_one_sexual_partner
+         ) %>% 
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~  c("{min}, {max}",
+                            "{mean} ({sd})",
+                            "{median} ({p25}, {p75})"
+                            
+      ),
+      all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_continuous() ~ 1,
+                  all_categorical() ~ c(0, 1)),
+    type = list(all_continuous()    ~ "continuous2",
+                where(is.logical)   ~ "categorical",
+                where(is.character) ~ "categorical",
+                all_dichotomous()   ~ "categorical"),
+    percent = "column",
+    missing_text = "Missing"
+  ) %>%
+  modify_header(label ~ "**Variable**") %>%
+  bold_labels()
+
+
+
+```
+  
+    
+    A total of 609 participants were included in this study. The cohort was predominantly female (449, 73.7%), with a smaller proportion of male participants (160, 26.3%).
+
+Age: The age of participants ranged from 18 to 87 years. The mean (SD) age was 44.7 (12.0) years, with a median (IQR) age of 44.0 (36.0, 51.0) years, indicating a roughly symmetric distribution around middle adulthood. When categorized, the largest age group was 35-49 years (286, 47.0%), followed by 50-64 years (171, 28.1%) and 18-34 years (120, 19.7%). A small proportion of participants were aged 65 years or older (32, 5.3%).
+
+Religion: The majority of participants identified as Christian (523, 85.9%), with 86 (14.1%) identifying as Muslim. Regarding marital status, most participants were married (394, 64.7%), while 115 (18.9%) were single, 65 (10.7%) were widowed, and 35 (5.7%) were separated.
+
+Education: Educational attainment was varied: the highest proportion of participants had a secondary level education (350, 57.5%), followed by tertiary education (117, 19.2%). A combined 23.3% of participants had either no formal education (72, 11.8%) or only a primary level education (70, 11.5%). 
+
+Employment status: The vast majority of participants were engaged in some form of work, with self-employment being the most common (362, 59.4%), followed by those who were employed (147, 24.1%). A minority were unemployed (92, 15.1%) or retired (8, 1.3%).
+
+Residence and Sexual activity: Most participants reported residing in Plateau state (450, 73.9%). The majority of the cohort also reported being sexually active (444, 72.9%). Among those who were sexually active, a large majority (369, 83.1%) reported having only one sexual partner (interpreted here as being in a mutually monogamous relationship), while 75 (16.9%) reported having more than one sexual partner.
+
+
+#### Figure showing Sex distribution of respondents
+```{r}
+
+# Pie chart - Sex distribution
+
+# First, create a summary data frame with counts and proportions
+sex_data <- adherence %>%
+  count(gender) %>%
+  mutate(percentage = n / sum(n) * 100,
+         label = paste0(gender, "\n", n, " (", round(percentage, 1), "%)"))
+
+# Create the pie chart
+pie <- sex_data %>% 
+ggplot(mapping = aes(x = "", y = n, fill = gender)) +
+  geom_col(width = 1, color = "white") + # Creates the stacked bar
+  coord_polar("y", start = 0) + # Transforms the bar into a pie chart
+  geom_text(aes(label = label), 
+            position = position_stack(vjust = 0.5), # Centers the labels
+            color = "black",
+            #fontface = "bold",
+            size = 5) +
+  scale_fill_manual(values = c("pink", "steelblue")) +
+  labs(title = "Distribution of respondents by Gender",
+       fill = "gender") +
+  theme_void() + # Removes axes, background, etc.
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, face = "bold")) # Centers title
+
+
+age_pyrd <- adherence %>%
+  age_pyramid(age_group = age_group,
+              split_by = gender,
+              proportional = TRUE,
+              show_midpoint = F,
+              pal = c("Female" = "pink", "Male" = "steelblue"))
+
+
+pie + age_pyrd
+
+```
+  
+  The pie chart shows a nearly even distribution of suspected dengue cases by gender for Epiweeks 18-29, 2025, with females comprising a slight majority at 136 cases (52.7%) and males accounting for 122 cases (47.3%).
+
+
+
+
+
+#### History of Antiretroviral Treatment among respondents
+```{r}
+
+adherence %>% 
+  select(`Duration of antiretroviral therapy (years)` = duration_of_art_years,
+         `ART duration category (years)` = art_duration_category,
+         `Periodicity of ART refill visit` = how_often_do_you_visit_the_hospital_for_art_refill,
+         `Missed ART dose in last 30 days` = in_the_past_30_days_how_many_doses_of_art_have_you_missed,
+         Forgetfullness = what_are_the_reasons_for_missing_art_doses_check_all_that_apply_forgetfulness,
+         `Drug side effects` = what_are_the_reasons_for_missing_art_doses_check_all_that_apply_drug_side_effects,
+         `Travel/mobility challenges` = what_are_the_reasons_for_missing_art_doses_check_all_that_apply_travel_mobility_issues,
+         `Stigma/Discrimination` = what_are_the_reasons_for_missing_art_doses_check_all_that_apply_stigma_discrimination,
+         `Lack of access to ART medication` = what_are_the_reasons_for_missing_art_doses_check_all_that_apply_lack_of_access_to_medication,
+         `Felt better and decided not to take it` = what_are_the_reasons_for_missing_art_doses_check_all_that_apply_feeling_better_and_deciding_not_to_take_it,
+         `Pattern of ART medication intake` = how_do_you_take_your_art_medication,
+         `Ever discontinued ART medication for > 1 month` = have_you_ever_stopped_taking_art_for_more_than_one_month,
+         `Intake of herbal mixtures for treatment of HIV or any other illness` = do_you_take_herbal_mixtures_for_treatment_of_hiv_or_any_other_illness
+  )%>% 
+  tbl_summary(
+    #by = clients_documented_art_adherence_by_clinician,
+    statistic = list(
+      all_continuous() ~  c("{min}, {max}",
+                            "{mean} ({sd})",
+                            "{median} ({p25}, {p75})"
+                            
+      ),
+      all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_continuous() ~ 2,
+                  all_categorical() ~ c(0, 1)),
+    type = list(all_continuous()    ~ "continuous2",
+                where(is.logical)   ~ "categorical",
+                where(is.character) ~ "categorical",
+                all_dichotomous()   ~ "categorical"),
+    percent = "column",
+    missing_text = "Missing"
+  ) %>%
+  #add_overall() %>%
+  #add_n() %>%
+  #add_p() %>% 
+  modify_header(label ~ "**Variable**") %>%
+  #modify_spanning_header(c("stat_1", "stat_2", "stat_3") ~ "**Hepatitis Infection**") %>%
+  #modify_footnote( all_stat_cols() ~ "Mean (SD) or Frequency (%)") %>%
+  #modify_caption("**Table 1. Socio-demographic characteristics of individuals with hepatitis notification(s)**") %>%
+  bold_labels()
+
+
+```
+  
+    
+    The cohort was highly experienced with antiretroviral therapy, with a mean (SD) duration of treatment of 8.82 (4.00) years. The median duration was 11.05 years (IQR: 6.20, 11.80), ranging from 0.4 to 20.2 years. Half of the participants (307, 50.5%) had been on ART for 11 years or longer, while a small minority (58, 9.5%) had been on treatment for one year or less.
+
+The majority of participants (335, 55.0%) had a clinic refill visit frequency of 1-3 months, followed closely by a sizeable proportion (239, 39.2%) who had refill visits less frequently (greater than 6 months). A small group (35, 5.7%) had refills every 4-6 months. No participants reported weekly refill visits.
+
+Adherence to medication was generally high. A large majority of participants (498, 81.8%) reported missing no doses in the previous 30 days. However, 111 participants (18.2%) reported some level of non-adherence. Of these, 71 (11.7% of total) reported missing more than five doses, indicating a significant adherence challenge in a subset of the cohort. This is further reflected in the pattern of intake: while most participants (473, 77.7%) reported taking their medication exactly as prescribed, 130 (21.3%) reported sometimes taking it on time and sometimes late, and 6 (1.0%) reported often forgetting or skipping doses.
+
+The vast majority of participants (592, 97.2%) reported never having discontinued their ART for more than one consecutive month. Concurrent use of herbal mixtures for HIV or other illnesses was low, with only 33 participants (5.4%) reporting use.
+
+Among the 111 participants who missed doses, the most frequently cited reasons were forgetfulness (64, 57.7%) and travel or mobility challenges (49, 44.1%). Stigma or discrimination was a factor for 28 participants (25.2%), and side effects were cited by 13 (11.7%). A small number reported discontinuing due to feeling better (4, 3.6%) or lack of access to medication (4, 3.6%).
+
+
+#### Baseline and Current Health Status of Respondents
+```{r}
+
+
+
+adherence %>% 
+  mutate(current_hiv_staging = replace_na(current_hiv_staging, "Stage 1")) %>% 
+  select(`HIV staging at ART commencement` = hiv_staging_at_commencement_of_art,
+        `Current HIV staging` = current_hiv_staging,
+        `Weight (kg) at commencement of ART` = weight_at_commencement_of_art_kg,
+         `Current weight (kg)` = current_weight_kg,
+         `Weight change (kg) over ART period` = weight_change,
+         `Weight change category over ART period` = weight_change_status,
+         `Duration of last viral load test` = when_was_your_last_viral_load_test,
+         `Viral load (copies/ml) at commencement of ART` = baseline_viral_load_copies_ml,
+         `Current viral load (copies/ml)` = current_viral_load_copies_ml,
+         `Viral load change (copies/ml) over ART period` = viral_load_change,
+         `Viral load change category` = viral_load_status,
+         `Clinical suppression of viral load observed` = is_there_viral_suppression_1000_copies_ml,
+         
+         `Result of last viral load test` = what_was_your_last_viral_load_result,
+         `Weight loss` = have_you_experienced_any_of_the_following_in_the_past_six_months_check_all_that_apply_weight_loss,
+         Cough = have_you_experienced_any_of_the_following_in_the_past_six_months_check_all_that_apply_cough,
+         `Night sweats` = have_you_experienced_any_of_the_following_in_the_past_six_months_check_all_that_apply_night_sweats,
+         `Difficulty in breathing` = have_you_experienced_any_of_the_following_in_the_past_six_months_check_all_that_apply_difficulty_in_breathing,
+         `Oral thrush` = have_you_experienced_any_of_the_following_in_the_past_six_months_check_all_that_apply_oral_thrush,
+         `Genital sores` = have_you_experienced_any_of_the_following_in_the_past_six_months_check_all_that_apply_sores_in_your_private_part,
+         `Vaginal discharge` = 
+           have_you_experienced_any_of_the_following_in_the_past_six_months_check_all_that_apply_vaginal_discharge,
+         `Pain while urinating` = have_you_experienced_any_of_the_following_in_the_past_six_months_check_all_that_apply_pain_while_urinating,
+         `Co-morbidities e.g. Hypertension/Diabetes` = have_you_experienced_any_of_the_following_in_the_past_six_months_check_all_that_apply_co_morbities_e_g_hypertension_diabetes_etc,
+         `None of the above` = have_you_experienced_any_of_the_following_in_the_past_six_months_check_all_that_apply_none_of_the_above,
+         `Health status progress since commencing ART` = how_would_you_describe_your_general_health_status_since_starting_art
+         
+  ) %>% 
+  tbl_summary(
+    #by = clients_documented_art_adherence_by_clinician,
+    statistic = list(
+      all_continuous() ~  c("{min}, {max}",
+                            "{mean} ({sd})",
+                            "{median} ({p25}, {p75})"
+                            
+      ),
+      all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_continuous() ~ 2,
+                  all_categorical() ~ c(0, 1)),
+    type = list(all_continuous()    ~ "continuous2",
+                where(is.logical)   ~ "categorical",
+                where(is.character) ~ "categorical",
+                all_dichotomous()   ~ "categorical"),
+    percent = "column",
+    missing_text = "Missing"
+  ) %>%
+  #add_overall() %>%
+  #add_n() %>%
+  #add_p() %>% 
+  modify_header(label ~ "**Variable**") %>%
+  #modify_spanning_header(c("stat_1", "stat_2", "stat_3") ~ "**Hepatitis Infection**") %>%
+  #modify_footnote( all_stat_cols() ~ "Mean (SD) or Frequency (%)") %>%
+  #modify_caption("**Table 1. Socio-demographic characteristics of individuals with hepatitis notification(s)**") %>%
+  bold_labels()
+
+
+
+```
+   
+    
+HIV Staging:
+At the initiation of anti-retroviral therapy, the entire study cohort (609 participants, 100.0%) was classified under WHO Clinical Stage 1, indicating that all participants were in the least severe stage of HIV disease at baseline. At the current assessment, the overwhelming majority of participants (603, 99.0%) remained in or were classified as WHO Clinical Stage 1. This indicates a sustained state of clinical well-being and immune health for most of the cohort following ART initiation. A very small number of participants (6, 1.0%) experienced disease progression. Three participants (0.5%) progressed to Stage 2, and another three (0.5%) progressed to the more severe Stage 4. The absence of any participants in Stage 3 at the current assessment is noted.
+  
+    
+Anthropometric and Virological Outcomes:
+Participants demonstrated stable or improved health metrics since initiating ART. The mean weight increased slightly from 67.34 kg at baseline to a current average weight of 68.37 kg, while the median age remained stable between baseline and current measurements at 65.0 kg (IQR: 57.0, 75.0) - baseline and 65.0 kg (IQR: 58.0, 76.0) - current assessment. The median weight change was 0.0 kg (IQR: 0.0, 0.0), with a mean increase of 1.03 kg (SD 3.58). The majority of participants (406, 66.7%) experienced no change in weight, while 152 (25.0%) gained weight and 51 (8.4%) experienced weight loss.
+
+Virologically, the cohort showed excellent suppression. The median viral load remained stable at 19.00 copies/ml from ART commencement to the current time point. Crucially, 96.9% (n=590) of participants achieved the primary outcome of clinical viral load suppression (<1000 copies/ml). Only 19 participants (3.1%) had unsuppressed viral loads (≥1000 copies/ml). This objective measure is supported by self-reported data, where 97.9% of participants (sum of 'Undetectable' and 'Detectable but below 1000') believed their last result indicated virological success. It is important to note that most participants (328, 53.9%) had their last viral load test more than a year ago.
+
+History of Opportunistic Infections and Comorbidities:
+The vast majority of participants (479, 78.8%) reported no history of opportunistic infections or related symptoms in the preceding six months. The most commonly reported symptom was weight loss (120, 19.7%), followed by cough (23, 3.8%). Other symptoms, such as night sweats, difficulty breathing, pain while urinating, and new comorbidities, were rare (each <1%). No cases of oral thrush or sexually transmitted infection symptoms (genital sores, vaginal discharge) were reported, indicating effective immune reconstitution.
+
+Self-Assessed Health Progress:
+An overwhelming majority of participants (607, 99.7%) reported an improvement in their overall health since commencing ART, with 461 (75.7%) reporting feeling "much better" and 146 (24.0%) feeling "slightly better." Only two participants (0.3%) reported no change, and none reported their health had worsened.  
+  
+  
+
+
+#### Anti-Retroviral Treatment (ART) Adherence among HIV positive patients using self reported adherence
+```{r}
+
+adherence %>% 
+  select(clients_documented_art_adherence_by_clinician,
+         `Pattern of intake of ART` = how_do_you_take_your_art_medication,
+         `Doses of ART missed in last 30 days` = in_the_past_30_days_how_many_doses_of_art_have_you_missed,
+         `Ever discontinued intake of ART for >1 month` = have_you_ever_stopped_taking_art_for_more_than_one_month) %>%
+  tbl_summary(
+    by = clients_documented_art_adherence_by_clinician,
+    statistic = list(
+      all_continuous() ~  c("{min}, {max}",
+                            "{mean} ({sd})",
+                            "{median} ({p25}, {p75})"
+                            
+      ),
+      all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_continuous() ~ 2,
+                  all_categorical() ~ c(0, 1)),
+    type = list(all_continuous()    ~ "continuous2",
+                where(is.logical)   ~ "categorical",
+                where(is.character) ~ "categorical",
+                all_dichotomous()   ~ "categorical"),
+    percent = "column",
+    label = list(
+      #age_cat_new ~ "Age category (years)",
+      
+    ),
+    missing_text = "Missing"
+  ) %>%
+  add_overall() %>%
+  #add_n() %>%
+  add_p() %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_spanning_header(c("stat_1", "stat_2", "stat_3") ~ "**Clients documented ART Adherence by Clinician**") %>%
+  #modify_footnote( all_stat_cols() ~ "Mean (SD) or Frequency (%)") %>%
+  #modify_caption("**Table 1. Socio-demographic characteristics of individuals with hepatitis notification(s)**") %>%
+  bold_labels()
+
+
+```
+  
+    
+    This analysis compared self-reported adherence behaviors against the gold standard of clinician-documented adherence categorization. The distribution of clinician-documented adherence was heavily skewed, with the overwhelming majority of participants (598, 98.2%) classified as having good adherence (≥95%). A small number were classified as having fair adherence (8, 1.3%) and only three participants (0.5%) were classified in the poor adherence category.
+
+Pattern of ART Intake:
+A Fisher’s Exact test revealed no statistically significant association between clinician-documented adherence and self-reported pattern of medication intake (p=0.4). While the numbers in the poor and fair adherence groups are small, a trend is observable. A higher proportion of participants in the poor (33.3%) and fair (37.5%) adherence groups reported a suboptimal pattern of intake ("sometimes on time, sometimes late") compared to those in the good adherence group (21.1%). All participants who reported the worst pattern ("often forget or skip doses") were, as expected, categorized in the good adherence group by clinicians, which may indicate a discrepancy in reporting versus assessment.
+
+Doses Missed in the Last 30 Days:
+Similarly, there was no statistically significant association between the number of missed doses in the last month and clinician-documented adherence (p=0.3). Again, a trend suggests that participants with poorer clinician-documented adherence were more likely to report missing doses. For instance, 33.3% of the poor adherence group and 25.0% of the fair adherence group reported missing more than five doses, compared to 11.4% of the good adherence group. Conversely, a lower percentage of participants in the poor (66.7%) and fair (62.5%) adherence groups reported missing zero doses compared to the good adherence group (82.1%).
+
+Treatment Discontinuation:
+There was no significant association between clinician-documented adherence and having ever discontinued ART for more than one month (p>0.9). All participants in the poor and fair adherence groups reported never having discontinued treatment. The 17 participants who reported a treatment interruption were all categorized in the good adherence group by clinicians, highlighting a potential limitation of a single clinician assessment to capture historical adherence behavior.  
+  
+  
+
+#### Baseline (before commencement of ART) and Current Body Weight of Respondents
+```{r}
+library(patchwork)
+
+total <- nrow(adherence)
+adherence$art_duration_category <- str_c(adherence$art_duration_category, " year(s)")
+
+tb <- adherence %>% 
+  filter(!is.na(art_duration_category)) %>%
+  group_by(`Category of ART duration` = art_duration_category) %>% 
+  summarise(`No of clients` = n(),
+            `Percentage (%)` = percent(`No of clients`/total, accuracy = 0.1),
+            `Minimum weight change (kg)` = min(weight_change, na.rm = T),
+            #`Median weight change (kg)`  = median(weight_change, na.rm = T),
+            `Maximum weight change (kg)` = max(weight_change, na.rm = T),
+            `Average weight change (kg)` = mean(weight_change, na.rm = T)) %>% 
+  qflextable() %>% 
+    add_header_lines(values = "Table 1: Weight change values across different categories of ART duration") %>% 
+    # Apply green background to all column headers
+    bg(part = "header", i = 2, bg = "#00AA00") %>%  
+    # Set white font for headers
+    color(part = "header", i = 2, color = "white") %>%  
+    # Highlight CFR >= 10% in red
+    #bg(part = "body", i = ~`Case Fatality Ratio (%)` >= 5, j = 7, bg = "#FF7F7F") %>% 
+    #add_footer_lines("Case fatality ratio >= 5% is highlighted.") %>% 
+    #italic(part = "footer") %>% 
+    align(part = "header", i = 1, align = "center") %>% 
+    bold(part = "header", i = 1, bold = TRUE)
+
+a1 <- ggplot(adherence,
+             aes(weight_at_commencement_of_art_kg))+
+  geom_boxplot(color = "black", fill = "steelblue")+
+  coord_flip()+
+  labs(x = "Weight before treatment (kg)")+
+  theme_minimal()
+
+a2 <- ggplot(adherence,
+             aes(current_weight_kg))+
+  geom_boxplot(color = "black", fill = "darkblue")+
+  coord_flip()+
+  labs(x = "Current weight (kg)")+
+  theme_minimal()
+
+
+
+
+a3 <- adherence %>% 
+  filter(!is.na(art_duration_category)) %>%  
+  ggplot(aes(weight_at_commencement_of_art_kg))+
+  geom_histogram(color = "steelblue", fill = "steelblue")+
+  facet_wrap(~art_duration_category, ncol = 1)+
+  labs(x = "Weight before treatment (kg)",
+       y = "Frequency")+
+  theme_minimal()
+
+a4 <- adherence %>% 
+  filter(!is.na(art_duration_category)) %>%  
+  ggplot(aes(current_weight_kg))+
+  geom_histogram(color = "darkblue", fill = "darkblue")+
+  facet_wrap(~art_duration_category, ncol = 1)+
+  labs(x = "Current weight (kg)",
+       y = "Frequency")+
+  theme_minimal()
+
+
+tb
+(a1+a2)+(a3+a4)
+
+
+
+```
+  
+    
+    This analysis describes the variation in weight change (from ART initiation to current) across categories of treatment duration. The cohort was stratified into four groups based on the length of time they had been receiving ART.
+
+The largest group of participants (307, 50.4%) were long-term therapy recipients, having been on ART for 11 years or more. This was followed by those on therapy for 6-10 years (153, 25.1%), 2-5 years (90, 14.8%), and 0-1 years (58, 9.5%).
+
+All duration groups demonstrated a positive mean weight change, indicating an overall trend of weight gain after initiating ART. The magnitude of mean weight gain was greatest in the most recent initiators (0-1 year group: +1.41 kg) and smallest in the 2-5 year group (+0.54 kg). The long-term therapy groups (6-10 and 11+ years) showed sustained mean weight gains of +1.01 kg and +1.12 kg, respectively.
+
+The data also reveals the variability in individual patient responses within each group. While the average change was positive, some individuals in every group experienced weight loss. The most significant weight loss was observed in the 2-5 year group, with one participant losing 30 kg. The ranges of weight change were broad across all categories, underscoring that weight change on ART is a highly individualized outcome.
+
+#### Baseline versus Current Viral Load of Respondents
+```{r}
+adherence %>% 
+  select(current_viral_load_category, 
+         `Baseline viral load category` = baseline_viral_load_category) %>% 
+  tbl_summary(
+    by = current_viral_load_category,
+    statistic = list(
+      all_continuous() ~  c("{min}, {max}",
+                            "{mean} ({sd})",
+                            "{median} ({p25}, {p75})"
+                            
+      ),
+      all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_continuous() ~ 1,
+                  all_categorical() ~ c(0, 1)),
+    type = list(all_continuous()    ~ "continuous2",
+                where(is.logical)   ~ "categorical",
+                where(is.character) ~ "categorical",
+                all_dichotomous()   ~ "categorical"),
+    percent = "row",
+    missing_text = "Missing"
+  ) %>%
+  add_overall() %>%
+  #add_n() %>%
+  add_p() %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_spanning_header(c("stat_1", "stat_2") ~ "**Current viral load category**") %>% 
+  #modify_footnote( all_stat_cols() ~ "Mean (SD) or Frequency (%)") %>%
+  #modify_caption("**Table 1. Socio-demographic characteristics of individuals with hepatitis notification(s)**") %>%
+  bold_labels()
+
+
+
+```
+  
+    
+A total of 609 participants were included in this analysis. The vast majority of participants (N=585, 96.1%) had a current viral load measurement below 1000 copies/ml, which is consistent with effective viral suppression. A small subset of participants (N=24, 3.9%) had a detectable current viral load of ≥1000 copies/ml.
+
+The distribution of participants across viral load categories at baseline was highly skewed, with nearly all participants (N=605, 99.3%) beginning with a baseline viral load of <1000 copies/ml. Only four participants (0.7%) had a baseline viral load of ≥1000 copies/ml.
+
+A chi-square test of independence was performed to examine the relationship between baseline and current viral load categories. The association between these variables was found to be statistically significant (p < 0.001).
+
+Among the 605 participants who started with a suppressed viral load (<1000 copies/ml), the overwhelming majority (584, 96.5%) maintained viral suppression at the current time point, while a small proportion (21, 3.5%) experienced virological failure (current viral load ≥1000 copies/ml). Conversely, all four participants who began with a high baseline viral load (≥1000 copies/ml) had a detectable viral load at the current time point. Of these, three (75.0%) remained unsuppressed, while one (25.0%) achieved viral suppression.
+
+These results indicate a strong and statistically significant association between viral load status at baseline and at the current time point. Starting with a suppressed viral load is a strong predictor of maintained suppression.
+
+
+
+#### Relationship between treatment adherence and viral suppression
+```{r}
+
+
+tbl_baseline <-adherence %>% 
+  select(baseline_viral_load_category,
+         `Clients documented ART Adherence by Clinician` = clients_documented_art_adherence_by_clinician,
+         `Pattern of intake of ART` = how_do_you_take_your_art_medication,
+         `Doses of ART missed in last 30 days` = in_the_past_30_days_how_many_doses_of_art_have_you_missed,
+         `Ever discontinued intake of ART for >1 month` = have_you_ever_stopped_taking_art_for_more_than_one_month) %>%
+  tbl_summary(
+    by = baseline_viral_load_category,
+    statistic = list(
+      all_continuous() ~  c("{min}, {max}",
+                            "{mean} ({sd})",
+                            "{median} ({p25}, {p75})"
+                            
+      ),
+      all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_continuous() ~ 1,
+                  all_categorical() ~ c(0, 1)),
+    type = list(all_continuous()    ~ "continuous2",
+                where(is.logical)   ~ "categorical",
+                where(is.character) ~ "categorical",
+                all_dichotomous()   ~ "categorical"),
+    percent = "row",
+    missing_text = "Missing"
+  ) %>%
+  add_overall() %>%
+  #add_n() %>%
+  add_p() %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_spanning_header(c("stat_1", "stat_2") ~ "**Baseline viral load category**") %>% 
+  #modify_footnote( all_stat_cols() ~ "Mean (SD) or Frequency (%)") %>%
+  #modify_caption("**Table 1. Socio-demographic characteristics of individuals with hepatitis notification(s)**") %>%
+  bold_labels()
+
+
+
+
+tbl_current <-adherence %>% 
+  select(current_viral_load_category,
+         `Clients documented ART Adherence by Clinician` = clients_documented_art_adherence_by_clinician,
+         `Pattern of intake of ART` = how_do_you_take_your_art_medication,
+         `Doses of ART missed in last 30 days` = in_the_past_30_days_how_many_doses_of_art_have_you_missed,
+         `Ever discontinued intake of ART for >1 month` = have_you_ever_stopped_taking_art_for_more_than_one_month) %>%
+  tbl_summary(
+    by = current_viral_load_category,
+    statistic = list(
+      all_continuous() ~  c("{min}, {max}",
+                            "{mean} ({sd})",
+                            "{median} ({p25}, {p75})"
+                            
+      ),
+      all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_continuous() ~ 1,
+                  all_categorical() ~ c(0, 1)),
+    type = list(all_continuous()    ~ "continuous2",
+                where(is.logical)   ~ "categorical",
+                where(is.character) ~ "categorical",
+                all_dichotomous()   ~ "categorical"),
+    percent = "row",
+    missing_text = "Missing"
+  ) %>%
+  add_overall() %>%
+  #add_n() %>%
+  add_p() %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_spanning_header(c("stat_1", "stat_2") ~ "**Current viral load category**") %>% 
+  #modify_footnote( all_stat_cols() ~ "Mean (SD) or Frequency (%)") %>%
+  #modify_caption("**Table 1. Socio-demographic characteristics of individuals with hepatitis notification(s)**") %>%
+  bold_labels()
+
+
+tbl_merge(
+  tbls = list(tbl_baseline, tbl_current),
+  tab_spanner = c("**Baseline Viral Load**", "**Current Viral Load**")
+) 
+
+```
+  
+    
+    The vast majority of the cohort (N=605, 99.3%) commenced Antiretroviral Therapy (ART) with a virally suppressed baseline viral load (<1000 copies/ml). Only a minuscule proportion (N=4, 0.7%) had a detectable baseline viral load of ≥1000 copies/ml. At the time of the study, the current viral load assessment revealed that 585 clients (96.1%) had achieved viral suppression, while 24 clients (3.9%) had a detectable viral load of ≥1000 copies/ml, indicating virological failure.
+
+The relationship between clinician-documented adherence and viral load outcomes was highly statistically significant for both baseline and current measurements, with p-values of 0.002 and <0.001, respectively. At baseline, all three clients (100%) categorized as having ‘Poor’ adherence (less than 85%) had a suppressed viral load, as did 75.0% (6 of 8) of those with ‘Fair’ adherence (85-94%), and 99.7% (596 of 598) of those with ‘Good’ adherence (≥95%). However, the relationship with current viral load tells a more consequential story. All three clients (100%) with ‘Poor’ adherence currently have a detectable viral load. The situation for those with ‘Fair’ adherence is particularly dire, with 7 out of 8 clients (87.5%) now experiencing virological failure. In contrast, the group with ‘Good’ adherence maintains an excellent suppression rate, with 97.7% (584 of 598) having an undetectable viral load. This indicates that while baseline suppression was high across all adherence categories, current virological success is profoundly dependent on maintained high adherence.
+
+The self-reported pattern of ART intake was not significantly associated with the baseline viral load (p>0.9) but demonstrated a powerful and highly significant association with the current viral load (p<0.001). The majority of clients (N=473, 77.7%) reported taking their medication ‘Exactly as prescribed’, and this group exhibited a high current viral suppression rate of 97.9% (463 of 473). A substantial number of clients (N=130, 21.3%) reported a pattern of ‘Sometimes on time, sometimes late’, and this group saw a notable drop in suppression to 90.0% (117 of 130). A small group (N=6, 1.0%) reported they ‘Often forget or skip doses’; within this group, 5 clients (83.3%) were suppressed, while one (16.7%) was not. This suggests that erratic timing and forgetfulness are significant risk factors for suboptimal virological outcomes.
+
+A detailed analysis of the number of doses missed in the last 30 days further elucidates the adherence-outcome relationship. There was no significant association between missed doses and baseline viral load (p=0.6), but a very strong association with current viral load (p<0.001). The largest group of clients (N=498, 81.8%) reported missing no doses in the previous month, and 97.4% (485 of 498) of these were virally suppressed. Smaller groups reported missing 1-2 doses (N=27, 4.4%; 96.3% suppressed) and 3-5 doses (N=13, 2.1%; 100% suppressed). The most critical finding emerged from the group that reported missing more than 5 doses (N=71, 11.7%). This group had a drastically reduced viral suppression rate of 85.9% (61 of 71), meaning that 10 clients (14.1%) in this category experienced treatment failure. This establishes a clear dose-response relationship, where the risk of virological failure increases sharply with the number of doses missed.
+
+The history of treatment discontinuation showed no significant link to baseline viral load (p>0.9) but was significantly associated with the current viral load outcome (p=0.003). The overwhelming majority of clients (N=592, 97.2%) reported never having discontinued ART for more than one month. Within this group, 96.6% (572 of 592) maintained viral suppression. Conversely, a small but high-risk group of clients (N=17, 2.8%) reported a history of discontinuing their medication for over a month. This action had severe consequences, as only 76.5% (13 of 17) of these clients were virally suppressed at the time of the study. This means that nearly a quarter (23.5%, or 4 clients) of those who had a history of a prolonged treatment interruption were in a state of virological failure, highlighting the profound and lasting negative impact of treatment discontinuation on health outcomes.
+
+### **Discussion**
+This study provides a compelling analysis of the intricate relationship between self-reported treatment adherence and virological outcomes among PLWHA at Faith Alive Foundation, Jos. The findings offer both a celebration of the program's overall success and a critical lens through which to identify and address vulnerabilities in treatment continuity and support.
+
+The most salient finding is the powerful, graded, inverse relationship between adherence and virological failure. The data leaves little doubt that as self-reported adherence declines, the risk of unsuppressed viral load increases exponentially. This finding robustly confirms the central tenet of HIV care: near-perfect adherence is not an ideal but a necessity for ART success. The outcomes for the ‘Good’ adherence group (≥95%), with a 97.7% suppression rate, are exemplary and align perfectly with global treatment targets and the pharmacological principle of maintaining constant drug pressure to suppress viral replication. However, the precipitous drop in suppression rates to 12.5% for the ‘Fair’ (85-94%) and 0% for the ‘Poor’ (<85%) groups is striking. It underscores a critical threshold effect; adherence below the 95% benchmark does not lead to a linear decline in outcomes but rather a catastrophic collapse in efficacy. This validates the 95% adherence benchmark established in earlier literature and confirms its relevance in this specific Nigerian clinical context.
+
+The analysis of missed doses reveals a crucial dose-response relationship, which is a strong indicator of a causal link. The fact that missing more than five doses in a month was associated with a 14.1% rate of virological failure identifies a clear and practical red flag for clinicians. This specific metric—more than five missed doses per month—can be used as a simple, effective screening tool during clinic visits to identify patients requiring immediate, intensive adherence intervention before failure occurs. The severe impact of a history of treatment discontinuation for more than one month is perhaps the most concerning finding. That 23.5% of these clients were unsuppressed suggests that such interruptions often lead to the development of drug resistance, rendering the original regimen ineffective upon re-initiation. This points to potential issues with patient education on the permanence of treatment, the management of side effects, or the impact of structural barriers (e.g., stigma, cost of transport, drug stock-outs) that force extended breaks.
+
+A critical nuance in the data is the discrepancy between baseline and current viral load associations. The lack of significant association between adherence measures and baseline viral load is likely because most clients, regardless of their later-reported adherence patterns, initiated ART and achieved initial suppression. This is a success of the program's initiation and early support services. The strong association with current viral load, however, indicates that maintaining that high level of adherence over the long term is the real challenge. It suggests that adherence is a dynamic behaviour that can wane over time due to fatigue, complacency, or emerging life challenges, and that continuous monitoring and support are essential.
+
+While the overall suppression rate of 96.1% is laudable and exceeds many national and global averages, this study’s value lies in its ability to look beyond this aggregate success. It identifies the specific at-risk profiles within the seemingly successful cohort: the patient who is "sometimes late," the one who misses "more than five doses," and the one with a history of stopping treatment. These are the individuals who need tailored support strategies, such as enhanced counselling, medication reminders, peer support groups, or interventions to address underlying structural barriers.
+
+#### **Implications for Practice and Policy**
+
+Targeted Adherence Counselling: Clinical focus must shift from generic advice to targeted interventions. Patients reporting fair adherence, missing more than five doses, or having a history of interruption should be flagged for immediate, intensive, and individualized adherence counselling.
+
+Strengthening Education: Patient education must explicitly emphasize the non-negotiable nature of >95% adherence and the severe, often irreversible, consequences of extended treatment interruptions. The concept of drug resistance must be effectively communicated.
+
+Operational Research: The foundation should investigate the root causes of non-adherence in this subset. Qualitative research is needed to understand why these clients miss doses or discontinue treatment—is it due to side effects, stigma, economic constraints, or simply forgetfulness? The answers will inform more effective interventions.
+
+Leveraging Technology: The implementation of simple reminder systems (e.g., SMS alerts, phone alarms) could significantly help those who are forgetful or struggle with timing their doses.
+
+#### **Limitations**
+This study has limitations. The reliance on self-reported adherence introduces the potential for social desirability bias, where patients over-report good adherence. The cross-sectional nature of the questions about missed doses and patterns of intake limits our ability to establish firm causality over time. Furthermore, the very small sample sizes in certain categories (e.g., only 3 clients with ‘Poor’ adherence), while statistically significant, require cautious interpretation and highlight the need for ongoing monitoring.
+
+In conclusion, the Faith Alive Foundation has built a highly successful treatment program. The findings of this study provide a roadmap to make it even more resilient. By moving from a blanket approach to a targeted strategy focused on identifying and supporting the small but high-risk cohort of patients struggling with adherence, the program can safeguard its impressive suppression rates and improve the long-term health outcomes for all its clients
+
+
+
+#### Barriers to and Enablers for Anti-Retroviral Treatment Adherence
+```{r}
+adherence %>% 
+  select(
+    #barriers
+    `Support from family and friends` = what_factors_make_it_easier_for_you_to_adhere_to_art_check_all_that_apply_support_from_family_friends,
+    `Reminder systems (alarms/phone calls/sms/pill organizer)` = what_factors_make_it_easier_for_you_to_adhere_to_art_check_all_that_apply_reminder_systems_alarms_phone_calls_sms_pill_organizer,
+    `Easy access to medication` = what_factors_make_it_easier_for_you_to_adhere_to_art_check_all_that_apply_easy_access_to_art_medication,
+    `Health worker support and counseling` = what_factors_make_it_easier_for_you_to_adhere_to_art_check_all_that_apply_health_worker_support_and_counseling,
+    `Understanding the importance of adherence` = what_factors_make_it_easier_for_you_to_adhere_to_art_check_all_that_apply_understanding_the_importance_of_adherence,
+    Others_enablers = what_factors_make_it_easier_for_you_to_adhere_to_art_check_all_that_apply_others,
+    
+    #barriers
+    `Side effects of ART` = what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply_side_effects,
+    `Forgetfullness` = what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply_forgetfulness,
+    `Stigma/Discrimination` = what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply_stigma_discrimination,
+    `Long distance to health facility` = what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply_long_distance_to_health_facility,
+    `Lack of transport fare to health facility` = what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply_lack_of_transport_fare,
+    `Poor attitude of health workers` = what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply_poor_health_worker_attitude,
+    Others_barriers = what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply_others   
+) %>% 
+  tbl_summary(
+    #by = current_viral_load_category,
+    statistic = list(
+      all_continuous() ~  c("{min}, {max}",
+                            "{mean} ({sd})",
+                            "{median} ({p25}, {p75})"
+                            
+      ),
+      all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_continuous() ~ 1,
+                  all_categorical() ~ c(0, 1)),
+    type = list(all_continuous()    ~ "continuous2",
+                where(is.logical)   ~ "categorical",
+                where(is.character) ~ "categorical",
+                all_dichotomous()   ~ "categorical"),
+    percent = "column",
+    missing_text = "Missing"
+  ) %>%
+  #add_overall() %>%
+  #add_n() %>%
+  #add_p() %>% 
+  modify_header(label ~ "**Variable**") %>%
+  #modify_spanning_header(c("stat_1", "stat_2") ~ "**Current viral load category**") %>% 
+  #modify_footnote( all_stat_cols() ~ "Mean (SD) or Frequency (%)") %>%
+  #modify_caption("**Table 1. Socio-demographic characteristics of individuals with hepatitis notification(s)**") %>%
+  bold_labels()
+
+
+```
+  
+    
+Participants identified a range of factors that enable and hinder their adherence to antiretroviral therapy. It is important to note that these are not mutually exclusive categories; patients could report multiple enablers and barriers.
+
+Enablers of Adherence:
+The most frequently reported enabler was the use of reminder systems, cited by 437 participants (71.8%). This included tools such as phone alarms, SMS reminders, phone calls, and pill organizers. The second most common enabler was support from family and friends, reported by 315 participants (51.7%). Other enablers, such as easy access to medication (3.6%), health worker support (1.3%), and an understanding of adherence importance (0.7%), were reported by a small minority of participants.
+
+Barriers to Adherence:
+A strikingly high number of participants, 507 (83.3%), reported stigma and discrimination as a barrier to adherence. This was the most prominent challenge by a large margin. The next most common barriers were long distance to the health facility (110, 18.1%) and side effects of ART (60, 9.9%). Patient-specific factors like forgetfulness (33, 5.4%) and lack of transport fare (11, 1.8%) were less frequently cited. Notably, no participants cited a poor attitude of health workers as a barrier.
+
+
+
+```{r include=FALSE}
+
+adherence %>% 
+  select(
+    #barriers
+    `Support from family and friends` = what_factors_make_it_easier_for_you_to_adhere_to_art_check_all_that_apply_support_from_family_friends,
+    `Reminder systems (alarms/phone calls/sms/pill organizer)` = what_factors_make_it_easier_for_you_to_adhere_to_art_check_all_that_apply_reminder_systems_alarms_phone_calls_sms_pill_organizer,
+    `Easy access to medication` = what_factors_make_it_easier_for_you_to_adhere_to_art_check_all_that_apply_easy_access_to_art_medication,
+    `Health worker support and counseling` = what_factors_make_it_easier_for_you_to_adhere_to_art_check_all_that_apply_health_worker_support_and_counseling,
+    `Understanding the importance of adherence` = what_factors_make_it_easier_for_you_to_adhere_to_art_check_all_that_apply_understanding_the_importance_of_adherence,
+    Others_enablers = what_factors_make_it_easier_for_you_to_adhere_to_art_check_all_that_apply_others,
+    
+    #barriers
+    `Side effects of ART` = what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply_side_effects,
+    `Forgetfullness` = what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply_forgetfulness,
+    `Stigma/Discrimination` = what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply_stigma_discrimination,
+    `Long distance to health facility` = what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply_long_distance_to_health_facility,
+    `Lack of transport fare to health facility` = what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply_lack_of_transport_fare,
+    `Poor attitude of health workers` = what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply_poor_health_worker_attitude,
+    Others_barriers = what_are_the_biggest_challenges_you_face_in_taking_art_as_prescribed_check_all_that_apply_others,
+    current_viral_load_category
+) %>% 
+  tbl_summary(
+    by = current_viral_load_category,
+    statistic = list(
+      all_continuous() ~  c("{min}, {max}",
+                            "{mean} ({sd})",
+                            "{median} ({p25}, {p75})"
+                            
+      ),
+      all_categorical() ~ "{n} ({p}%)"),
+    digits = list(all_continuous() ~ 1,
+                  all_categorical() ~ c(0, 1)),
+    type = list(all_continuous()    ~ "continuous2",
+                where(is.logical)   ~ "categorical",
+                where(is.character) ~ "categorical",
+                all_dichotomous()   ~ "categorical"),
+    percent = "column",
+    missing_text = "Missing"
+  ) %>%
+  #add_overall() %>%
+  #add_n() %>%
+  #add_p() %>% 
+  modify_header(label ~ "**Variable**") %>%
+  modify_spanning_header(c("stat_1", "stat_2") ~ "**Current viral load category**") %>% 
+  #modify_footnote( all_stat_cols() ~ "Mean (SD) or Frequency (%)") %>%
+  #modify_caption("**Table 1. Socio-demographic characteristics of individuals with hepatitis notification(s)**") %>%
+  bold_labels()
+
+
+```
+
